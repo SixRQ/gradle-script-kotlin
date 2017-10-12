@@ -1,17 +1,9 @@
-buildscript {
-    repositories {
-        gradleScriptKotlin()
-    }
-    dependencies {
-        classpath(kotlinModule("gradle-plugin"))
-    }
+plugins {
+    kotlin("jvm")
+    application
 }
 
 kotlinProject()
-
-plugins {
-    application
-}
 
 application {
     mainClassName = "cli.Main"

@@ -1,23 +1,24 @@
 import org.jetbrains.kotlin.gradle.tasks.KotlinCompile
 
 buildscript {
-    repositories { gradleScriptKotlin() }
-    dependencies { classpath(kotlinModule("gradle-plugin")) }
+    dependencies { classpath(kotlin("gradle-plugin")) }
+    repositories { jcenter() }
 }
 
 allprojects {
 
-    group = "org.gradle.script.kotlin.samples.multiprojectci"
+    group = "org.gradle.kotlin.dsl.samples.multiprojectci"
 
     version = "1.0"
 
     repositories {
-        gradleScriptKotlin()
+        jcenter()
     }
 }
 
 // Configure all KotlinCompile tasks on each sub-project
 subprojects {
+
     tasks.withType<KotlinCompile> {
         println("Configuring $name in project ${project.name}...")
         kotlinOptions {

@@ -23,19 +23,24 @@ import criterion.Result
 import criterion.benchmark
 
 import org.gradle.api.DefaultTask
+import org.gradle.api.internal.tasks.options.Option
 import org.gradle.api.tasks.TaskAction
 
 import org.gradle.tooling.GradleConnector
 import org.gradle.tooling.GradleConnector.newConnector
 import org.gradle.tooling.ProjectConnection
 
+import org.gradle.tooling.internal.consumer.ConnectorServices
+
 import java.io.ByteArrayOutputStream
 import java.io.File
+import java.io.IOException
 
 import java.lang.IllegalStateException
 
-import java.util.Calendar
-import java.util.TimeZone
+import java.time.OffsetDateTime
+import java.time.ZoneId
+
 
 open class Benchmark : DefaultTask() {
 
@@ -49,10 +54,20 @@ open class Benchmark : DefaultTask() {
 
     var resultDir: File? = null
 
+    @Option(option = "exclude-sample", description = "Excludes a sample from the benchmark.")
+    var excludedSamplePatterns = mutableListOf("android")
+
+    @Option(option = "include-sample", description = "Includes a sample in the benchmark (disables automatic inclusion).")
+    var includedSamplePatterns = mutableListOf<String>()
+
+    @Suppress("unused")
     @TaskAction
     fun run() {
+        val (included, excluded) = project.sampleDirs().partition { isIncludedAndNotExcluded(it.name) }
+        reportExcludedSamples(excluded)
+
         val config = BenchmarkConfig(warmUpRuns, observationRuns)
-        val quotients = project.sampleDirs().filter { !it.name.contains("android") }.map {
+        val quotients = included.map {
             benchmark(it, config)
         }
         val result = QuotientResult(quotients)
@@ -63,66 +78,112 @@ open class Benchmark : DefaultTask() {
         }
     }
 
-    private fun quotientToPercentage(quotient: Double) = (quotient - 1) * 100
+    private
+    fun reportExcludedSamples(excluded: List<File>) {
+        if (excluded.isNotEmpty()) {
+            println("The following samples were excluded from the benchmark by the patterns {include = $includedSamplePatterns, exclude = $excludedSamplePatterns}:")
+            excluded.forEach {
+                println("\t${it.name}")
+            }
+            println()
+        }
+    }
 
-    private fun benchmark(sampleDir: File, config: BenchmarkConfig): Double {
-        val relativeSampleDir = sampleDir.relativeTo(project.projectDir)
-        println(relativeSampleDir)
+    private
+    fun isIncludedAndNotExcluded(sampleName: String) =
+        isIncluded(sampleName) && !isExcluded(sampleName)
 
-        val baseline = benchmarkWith(connectorFor(sampleDir), config)
+    private
+    fun isIncluded(sampleName: String) =
+        includedSamplePatterns
+            .takeIf { it.isNotEmpty() }
+            ?.let { matchesAnyOf(it, sampleName) }
+            ?: true
+
+    private
+    fun isExcluded(sampleName: String) =
+        matchesAnyOf(excludedSamplePatterns, sampleName)
+
+    private
+    fun matchesAnyOf(patterns: List<String>, sampleName: String) =
+        patterns.any { sampleName.contains(it, ignoreCase = true) }
+
+    private
+    fun quotientToPercentage(quotient: Double) = (quotient - 1) * 100
+
+    private
+    fun benchmark(sampleDir: File, config: BenchmarkConfig): Double {
+        val sampleName = sampleDir.name
+        println("samples/$sampleName")
+
+        val baselineConfig = BenchmarkRunConfig("baseline", sampleName, sampleDir, config)
+        val baseline = benchmarkWith(
+            connectorFor(temporaryCopyFor(baselineConfig)),
+            baselineConfig)
         println("\tbaseline: ${format(baseline)}")
 
-        val latest = benchmarkWith(connectorFor(sampleDir).useInstallation(latestInstallation!!), config)
+        val latestConfig = BenchmarkRunConfig("latest", sampleName, sampleDir, config)
+        val latest = benchmarkWith(
+            connectorFor(temporaryCopyFor(latestConfig)).useInstallation(latestInstallation!!),
+            latestConfig)
         println("\tlatest:   ${format(latest)}")
 
         val quotient = latest.median.ms / baseline.median.ms
         println("\tlatest / baseline: %.2f".format(quotient))
 
-        appendToSampleResultFile(latest, sampleDir)
+        appendToSampleResultFile(latest, sampleName)
         return quotient
     }
 
-    private fun benchmarkWith(connector: GradleConnector, config: BenchmarkConfig): BenchmarkResult =
-        withUniqueDaemonRegistry {
+    private
+    fun benchmarkWith(connector: GradleConnector, runConfig: BenchmarkRunConfig): BenchmarkResult =
+        withUniqueDaemonRegistry(temporaryDirFor(runConfig.sampleName, runConfig.name)) {
             withConnectionFrom(connector) {
-                benchmark(config) {
+                benchmark(runConfig.benchmarkConfig) {
                     newBuild().forTasks("help").run()
                 }
             }
         }
 
-    private fun appendToSampleResultFile(result: BenchmarkResult, sampleDir: File) {
-        resultFileFor(sampleDir)
+    private
+    fun appendToSampleResultFile(result: BenchmarkResult, sampleName: String) {
+        resultFileFor(sampleName)
             .apply { parentFile.mkdirs() }
             .appendText(toJsonLine(result))
     }
 
-    private fun resultFileFor(sampleDir: File) =
-        File(effectiveResultDir, "${sampleDir.name}.jsonl")
+    private
+    fun resultFileFor(sampleName: String) =
+        File(effectiveResultDir, "$sampleName.jsonl")
 
-    private val effectiveResultDir by lazy {
+    private
+    val effectiveResultDir by lazy {
         resultDir ?: File(project.buildDir, "benchmark")
     }
 
-    private fun format(result: BenchmarkResult) =
+    private
+    fun format(result: BenchmarkResult) =
         "%.2f ms    %.2f ms (std dev %.2f ms)".format(
             result.median.ms, result.mean.ms, result.stdDev.ms)
 
-    private fun toJsonLine(result: BenchmarkResult) =
+    private
+    fun toJsonLine(result: BenchmarkResult) =
         """{"what": "%s", "when": "%s", "data": %s}${'\n'}""".format(
             commitHash, ISO8601Now, toJsonArray(result.points))
 
-    private fun toJsonArray(points: List<Duration>) =
+    private
+    fun toJsonArray(points: List<Duration>) =
         points.joinToString(prefix = "[", postfix = "]", separator = ",") {
             "%.6f".format(it.ms)
         }
 
-    private val ISO8601Now by lazy {
-        // http://stackoverflow.com/a/11417382/214464
-        javax.xml.bind.DatatypeConverter.printDateTime(Calendar.getInstance(TimeZone.getTimeZone("UTC")))
+    private
+    val ISO8601Now by lazy {
+        OffsetDateTime.now(ZoneId.of("UTC")).toString()
     }
 
-    private val commitHash by lazy {
+    private
+    val commitHash by lazy {
         println("Attempting to determine current commit hash via environment variable")
         System.getenv("BUILD_VCS_NUMBER").let { hash ->
             if (hash != null) {
@@ -138,7 +199,34 @@ open class Benchmark : DefaultTask() {
             }
         }
     }
+
+    private
+    fun temporaryCopyFor(config: BenchmarkRunConfig) =
+        emptyTemporaryDirFor(config.sampleName, "${config.name}/${config.sampleName}").apply {
+            if (!config.sampleDir.copyRecursively(this)) {
+                throw IOException("Unable to copy ${config.sampleDir} to $this")
+            }
+        }
+
+    private
+    fun emptyTemporaryDirFor(sampleName: String, temporaryDirName: String) =
+        temporaryDirFor(sampleName, temporaryDirName).apply {
+            if (exists() && !deleteRecursively()) {
+                throw IOException("Unable to delete existing $this")
+            }
+        }
+
+    private
+    fun temporaryDirFor(sampleName: String, temporaryDirName: String) =
+        File(temporaryDir, "$sampleName/$temporaryDirName")
 }
+
+private
+data class BenchmarkRunConfig(
+    val name: String,
+    val sampleName: String,
+    val sampleDir: File,
+    val benchmarkConfig: BenchmarkConfig)
 
 class QuotientResult(observations: List<Double>) : Result<Double>(observations) {
 
@@ -150,12 +238,19 @@ class QuotientResult(observations: List<Double>) : Result<Double>(observations) 
 }
 
 fun connectorFor(projectDir: File) =
-    newConnector().forProjectDirectory(projectDir)
+    newConnector().forProjectDirectory(projectDir)!!
 
-inline fun <T> withConnectionFrom(connector: GradleConnector, block: ProjectConnection.() -> T): T =
-    connector.connect().use(block)
+inline
+fun <T> withConnectionFrom(connector: GradleConnector, block: ProjectConnection.() -> T): T {
+    try {
+        return connector.connect().use(block)
+    } finally {
+        ConnectorServices.reset()
+    }
+}
 
-inline fun <T> ProjectConnection.use(block: (ProjectConnection) -> T): T {
+inline
+fun <T> ProjectConnection.use(block: (ProjectConnection) -> T): T {
     try {
         return block(this)
     } finally {
@@ -166,13 +261,16 @@ inline fun <T> ProjectConnection.use(block: (ProjectConnection) -> T): T {
 /**
  * Forces a new daemon process to be started by basing the registry on an unique temp dir.
  */
-inline fun <T> withUniqueDaemonRegistry(block: () -> T) =
-    withDaemonRegistry(createTempDir("gradle-script-kotlin-benchmark"), block)
+inline
+fun <T> withUniqueDaemonRegistry(baseDir: File, block: () -> T) =
+    withDaemonRegistry(createTempDir("daemon-registry-", directory = baseDir), block)
 
-inline fun <T> withDaemonRegistry(registryBase: File, block: () -> T) =
+inline
+fun <T> withDaemonRegistry(registryBase: File, block: () -> T) =
     withSystemProperty("org.gradle.daemon.registry.base", registryBase.path, block)
 
-inline fun <T> withSystemProperty(key: String, value: String, block: () -> T): T {
+inline
+fun <T> withSystemProperty(key: String, value: String, block: () -> T): T {
     val originalValue = System.getProperty(key)
     try {
         System.setProperty(key, value)

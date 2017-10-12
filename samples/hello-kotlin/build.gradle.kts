@@ -1,30 +1,16 @@
-buildscript {
-
-    repositories {
-        gradleScriptKotlin()
-    }
-
-    dependencies {
-        classpath(kotlinModule("gradle-plugin"))
-    }
-}
-
 plugins {
+    kotlin("jvm")
     application
 }
 
-apply {
-    plugin("kotlin")
-}
-
-configure<ApplicationPluginConvention> {
+application {
     mainClassName = "samples.HelloWorldKt"
 }
 
-repositories {
-    gradleScriptKotlin()
+dependencies {
+    compile(kotlin("stdlib"))
 }
 
-dependencies {
-    compile(kotlinModule("stdlib"))
+repositories {
+    jcenter()
 }

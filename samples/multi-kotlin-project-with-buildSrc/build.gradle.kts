@@ -1,11 +1,11 @@
 allprojects {
 
-    group = "org.gradle.script.kotlin.samples.multiproject"
+    group = "org.gradle.kotlin.dsl.samples.multiproject"
 
     version = "1.0"
 
     repositories {
-        gradleScriptKotlin()
+        jcenter()
     }
 }
 
@@ -14,7 +14,7 @@ plugins {
 }
 
 dependencies {
-    // Make the root project archives configuration depend on every subproject
+    // Make the root project archives configuration depend on every sub-project
     subprojects.forEach {
         archives(it)
     }

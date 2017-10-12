@@ -1,3 +1,5 @@
+import org.jetbrains.kotlin.gradle.tasks.KotlinCompile
+
 buildscript {
     ext.kotlinVersion = file('../kotlin-version.txt').text.trim()
 
@@ -12,8 +14,18 @@ buildscript {
 
 apply plugin: 'kotlin'
 
+tasks.withType(KotlinCompile) {
+    kotlinOptions {
+        freeCompilerArgs = [
+            "-Xjsr305-annotations=enable",
+            "-Xskip-runtime-version-check"
+        ]
+    }
+}
+
 dependencies {
     compile gradleApi()
+    compile "org.jetbrains.kotlin:kotlin-gradle-plugin:$kotlinVersion"
     compile "org.jetbrains.kotlin:kotlin-stdlib:$kotlinVersion"
     compile "org.jetbrains.kotlin:kotlin-reflect:$kotlinVersion"
     compile 'org.ow2.asm:asm-all:5.1'

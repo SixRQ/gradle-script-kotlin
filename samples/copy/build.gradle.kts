@@ -1,4 +1,3 @@
-import org.gradle.api.tasks.*
 import org.apache.tools.ant.filters.*
 
 //for including in the copy task
@@ -7,25 +6,28 @@ val dataContent = copySpec {
     include("*.data")
 }
 
-task<Copy>("initConfig") {
+tasks {
+    "initConfig"(Copy::class) {
 
-    from("src/main/config") {
-        include("**/*.properties")
-        include("**/*.xml")
-        filter<ReplaceTokens>(
-            "tokens" to mapOf("version" to "2.3.1"))
+        val tokens = mapOf("version" to "2.3.1")
+        inputs.properties(tokens)
+
+        from("src/main/config") {
+            include("**/*.properties")
+            include("**/*.xml")
+            filter<ReplaceTokens>("tokens" to tokens)
+        }
+
+        from("src/main/languages") {
+            rename("EN_US_(.*)", "$1")
+        }
+
+        into("build/target/config")
+        exclude("**/*.bak")
+        includeEmptyDirs = false
+        with(dataContent)
     }
-
-    from("src/main/languages") {
-        rename("EN_US_(.*)", "$1")
+    "clean"(Delete::class) {
+        delete(buildDir)
     }
-
-    into("build/target/config")
-    exclude("**/*.bak")
-    includeEmptyDirs = false
-    with(dataContent)
-}
-
-task<Delete>("clean") {
-    delete(buildDir)
 }

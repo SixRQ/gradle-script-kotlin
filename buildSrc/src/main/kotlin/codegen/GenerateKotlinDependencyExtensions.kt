@@ -17,11 +17,13 @@
 package codegen
 
 import org.gradle.api.DefaultTask
+
 import org.gradle.api.tasks.Input
 import org.gradle.api.tasks.OutputFile
 import org.gradle.api.tasks.TaskAction
 
 import java.io.File
+
 
 open class GenerateKotlinDependencyExtensions : DefaultTask() {
 
@@ -32,30 +34,41 @@ open class GenerateKotlinDependencyExtensions : DefaultTask() {
     var embeddedKotlinVersion: String? = null
 
     @get:Input
-    var gradleScriptKotlinRepository: String? = null
+    var kotlinDslPluginsVersion: String? = null
 
+    @get:Input
+    var kotlinDslRepository: String? = null
+
+    @Suppress("unused")
     @TaskAction
     fun generate() {
         outputFile!!.writeText(
             """$licenseHeader
 
-package org.gradle.script.lang.kotlin
+package org.gradle.kotlin.dsl
 
 import org.gradle.api.artifacts.dsl.DependencyHandler
 import org.gradle.api.artifacts.dsl.RepositoryHandler
 
 import org.gradle.api.artifacts.repositories.ArtifactRepository
 
+import org.gradle.plugin.use.PluginDependenciesSpec
+import org.gradle.plugin.use.PluginDependencySpec
+
+
 /**
- * The version of the Kotlin compiler embedded in gradle-script-kotlin (currently _${embeddedKotlinVersion}_).
+ * The version of the Kotlin compiler embedded in gradle-kotlin-dsl (currently _${embeddedKotlinVersion}_).
  */
 val embeddedKotlinVersion = "$embeddedKotlinVersion"
 
+
 /**
- * Adds the remote repository containing the Kotlin libraries embedded in gradle-script-kotlin.
+ * Adds the remote repository containing the Kotlin libraries embedded in gradle-kotlin-dsl.
  */
+@Deprecated("Will be removed in 1.0")
 fun RepositoryHandler.gradleScriptKotlin(): ArtifactRepository =
-    maven { it.setUrl("$gradleScriptKotlinRepository") }
+    maven { it.setUrl("$kotlinDslRepository") }
+
 
 /**
  * Builds the dependency notation for the named Kotlin [module] at the given [version].
@@ -63,13 +76,60 @@ fun RepositoryHandler.gradleScriptKotlin(): ArtifactRepository =
  * @param module simple name of the Kotlin module, for example "reflect".
  * @param version optional desired version, null implies [embeddedKotlinVersion].
  */
-fun DependencyHandler.kotlinModule(module: String, version: String? = null): Any =
+fun DependencyHandler.kotlin(module: String, version: String? = null): Any =
     "org.jetbrains.kotlin:kotlin-${'$'}module:${'$'}{version ?: embeddedKotlinVersion}"
+
+
+@Deprecated("Will be removed in 1.0", ReplaceWith("kotlin(module, version)"))
+fun DependencyHandler.kotlinModule(module: String, version: String? = null): Any =
+    kotlin(module, version)
+
+
+/**
+ * Applies the given Kotlin plugin [module] at the (optional) given [version] ([embeddedKotlinVersion] by default).
+ *
+ * For example: `plugins { kotlin("jvm") }`
+ *
+ * Visit the [plugin portal](https://plugins.gradle.org/search?term=org.jetbrains.kotlin) to see the list of available plugins.
+ *
+ * @param module simple name of the Kotlin Gradle plugin module, for example "jvm", "android", "kapt", "plugin.allopen" etc...
+ * @param version optional desired version, null implies [embeddedKotlinVersion].
+ */
+fun PluginDependenciesSpec.kotlin(module: String, version: String? = null): PluginDependencySpec =
+    id("org.jetbrains.kotlin.${'$'}module") version (version ?: embeddedKotlinVersion)
+
+
+/**
+ * The `embedded-kotlin` plugin.
+ *
+ * Equivalent to `id("org.gradle.kotlin.embedded-kotlin") version "$kotlinDslPluginsVersion"`
+ *
+ * You can also use `` `embedded-kotlin` version "$kotlinDslPluginsVersion" `` if you want to use a different version.
+ *
+ * @see org.gradle.kotlin.dsl.plugins.embedded.EmbeddedKotlinPlugin
+ */
+val PluginDependenciesSpec.`embedded-kotlin`: PluginDependencySpec
+    get() = id("org.gradle.kotlin.embedded-kotlin") version "$kotlinDslPluginsVersion"
+
+/**
+ * The `kotlin-dsl` plugin.
+ *
+ * Equivalent to `id("org.gradle.kotlin.kotlin-dsl") version "$kotlinDslPluginsVersion"`
+ *
+ * You can also use `` `kotlin-dsl` version "$kotlinDslPluginsVersion" `` if you want to use a different version.
+ *
+ * @see org.gradle.kotlin.dsl.plugins.dsl.KotlinDslPlugin
+ */
+val PluginDependenciesSpec.`kotlin-dsl`: PluginDependencySpec
+    get() = id("org.gradle.kotlin.kotlin-dsl") version "$kotlinDslPluginsVersion"
+
 """)
     }
 }
 
-internal val licenseHeader = """/*
+
+internal
+val licenseHeader = """/*
  * Copyright 2016 the original author or authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
